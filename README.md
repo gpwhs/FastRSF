@@ -5,7 +5,7 @@ performance compares to scikit-survival. Memory usage seems much lower, but spee
 
 
 
-'''
+```
 ❯ uv run compare.py
 Loading data...
 
@@ -46,5 +46,7 @@ Prediction speed: SLOWER by 66.11%
 Concordance index: WORSE by 0.015671
 Prediction correlation: 0.843660
 Memory usage: LESS by 78.18%
-==================================================''''
-![[prediction_comparison.png]]
+==================================================
+```
+![](survival_function_side_by_side.png)
+![](survival_function_comparison.png)
