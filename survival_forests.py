@@ -105,7 +105,7 @@ class FastRandomSurvivalForest(BaseEstimator, SurvivalAnalysisMixin):
         "bootstrap": ["boolean"],
         "oob_score": ["boolean"],
         "random_state": ["random_state"],
-        "n_jobs": [Interval(numbers.Integral, 1, None, closed="left")],
+        "n_jobs": [Interval(numbers.Integral, None, None, closed="neither")],
         "verbose": [Interval(numbers.Integral, 0, None, closed="left")],
     }
 
@@ -562,9 +562,9 @@ class SurvivalTree:
             depth >= self.max_depth
             or n_samples < self.min_samples_split_
             or n_samples < 2 * self.min_samples_leaf_
-            or np.all(event[indices] == 0)
-        ):  # All censored
-
+            or np.all(event[indices] == 0)  # All censored
+            or np.sum(event[indices]) < 1  # Need at least one event
+        ):
             # Make this a leaf node
             node.is_leaf = True
 
@@ -579,7 +579,7 @@ class SurvivalTree:
         feature, threshold, improvement = self._find_best_split(X, event, time, indices)
 
         # If no good split was found, make this a leaf
-        if feature is None or improvement <= 0:
+        if feature is None or improvement <= 0 or np.isnan(improvement):
             node.is_leaf = True
             node.survival_curves = self._compute_survival_curves(
                 event[indices], time[indices]
@@ -594,10 +594,12 @@ class SurvivalTree:
         left_indices = indices[X[indices, feature] <= threshold]
         right_indices = indices[X[indices, feature] > threshold]
 
-        # Check if split is valid (enough samples in each child)
+        # Check if split is valid (enough samples in each child and at least one event)
         if (
             len(left_indices) < self.min_samples_leaf_
             or len(right_indices) < self.min_samples_leaf_
+            or np.sum(event[left_indices]) < 1
+            or np.sum(event[right_indices]) < 1
         ):
             node.is_leaf = True
             node.survival_curves = self._compute_survival_curves(
@@ -633,6 +635,9 @@ class SurvivalTree:
 
         # Compute parent node score
         parent_score = self._compute_node_score(event[indices], time[indices])
+        if np.isnan(parent_score) or np.isinf(parent_score):
+            # Return no split if parent score is problematic
+            return None, None, 0
 
         # Try all features
         for feature in feature_indices:
@@ -641,6 +646,9 @@ class SurvivalTree:
             # Get unique feature values as potential thresholds
             # For efficiency, we use a subset of thresholds for features with many unique values
             unique_values = np.unique(feature_values)
+            if len(unique_values) <= 1:
+                continue  # Skip features with only one value
+
             if len(unique_values) > 10:
                 potential_thresholds = np.percentile(
                     unique_values, np.linspace(0, 100, 10)
@@ -658,6 +666,8 @@ class SurvivalTree:
                 if (
                     np.sum(left_mask) < self.min_samples_leaf_
                     or np.sum(right_mask) < self.min_samples_leaf_
+                    or np.sum(event[indices][left_mask]) == 0
+                    or np.sum(event[indices][right_mask]) == 0
                 ):
                     continue
 
@@ -669,6 +679,15 @@ class SurvivalTree:
                     event[indices][right_mask], time[indices][right_mask]
                 )
 
+                # Skip if scores are problematic
+                if (
+                    np.isnan(left_score)
+                    or np.isnan(right_score)
+                    or np.isinf(left_score)
+                    or np.isinf(right_score)
+                ):
+                    continue
+
                 # Weighted sum of child scores
                 n_left = np.sum(left_mask)
                 n_right = np.sum(right_mask)
@@ -677,7 +696,11 @@ class SurvivalTree:
                 )
 
                 # Update best if improvement is better
-                if improvement > best_improvement:
+                if (
+                    improvement > best_improvement
+                    and not np.isnan(improvement)
+                    and not np.isinf(improvement)
+                ):
                     best_feature = feature
                     best_threshold = threshold
                     best_improvement = improvement
@@ -700,6 +723,9 @@ class SurvivalTree:
 
         # Count events and at-risk for each time point
         unique_times = np.unique(sorted_time[sorted_event == 1])
+        if len(unique_times) == 0:
+            return 0
+
         n_events = np.zeros_like(unique_times, dtype=float)
         n_at_risk = np.zeros_like(unique_times, dtype=float)
 
@@ -713,7 +739,8 @@ class SurvivalTree:
         if np.any(n_at_risk == 0):
             return 0
 
-        hazard = n_events / n_at_risk
+        # Avoid division by zero by ensuring hazards are < 1
+        hazard = np.clip(n_events / n_at_risk, 0, 0.9999)
         risk_score = -np.sum(np.log(1 - hazard))
 
         return risk_score
@@ -733,15 +760,25 @@ class SurvivalTree:
         survival = np.ones(len(self.unique_times))
         at_risk = len(sorted_time)
 
+        if at_risk == 0:
+            return np.ones(len(self.unique_times))
+
         last_i = 0
         for i, t in enumerate(self.unique_times):
             # Find events that occurred at or before this time
             while last_i < len(sorted_time) and sorted_time[last_i] <= t:
                 if sorted_event[last_i]:
                     # Event occurred at this time
-                    survival[i:] *= 1 - 1 / at_risk
+                    if at_risk > 0:  # Protect against division by zero
+                        survival[i:] *= 1 - 1 / at_risk
                 at_risk -= 1
                 last_i += 1
+                # Break if no more samples at risk
+                if at_risk <= 0:
+                    break
+
+        # Ensure survival probabilities are valid (between 0 and 1)
+        survival = np.clip(survival, 0.0001, 1.0)
 
         return survival
 
