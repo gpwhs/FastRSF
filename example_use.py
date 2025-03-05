@@ -13,7 +13,7 @@ rsf = FastRandomSurvivalForest(
     min_samples_split=10,
     min_samples_leaf=5,
     max_features="sqrt",
-    n_jobs=-1,  # Use all available cores
+    n_jobs=1,  # Use all available cores
     random_state=42,
 )
 rsf.fit(X, y)
@@ -35,6 +35,7 @@ plt.grid(alpha=0.3)
 plt.show()
 
 # Predict risk scores
+
 risk_scores = rsf.predict(X.iloc[:10])
 print("Risk scores (higher = higher risk):", risk_scores)
 

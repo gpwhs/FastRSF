@@ -1,8 +1,9 @@
 import numpy as np
+import numbers  # Add this import
 from joblib import Parallel, delayed
 from sklearn.base import BaseEstimator
 from sklearn.utils._param_validation import Interval, StrOptions
-from sklearn.utils.validation import check_is_fitted, check_random_state, validate_data
+from sklearn.utils.validation import check_is_fitted, check_random_state
 
 from sksurv.base import SurvivalAnalysisMixin
 from sksurv.util import check_array_survival
@@ -85,27 +86,27 @@ class FastRandomSurvivalForest(BaseEstimator, SurvivalAnalysisMixin):
     """
 
     _parameter_constraints = {
-        "n_estimators": [Interval(int, 1, None, closed="left")],
-        "max_depth": [Interval(int, 1, None, closed="left"), None],
+        "n_estimators": [Interval(numbers.Integral, 1, None, closed="left")],
+        "max_depth": [Interval(numbers.Integral, 1, None, closed="left"), None],
         "min_samples_split": [
-            Interval(int, 2, None, closed="left"),
-            Interval(float, 0, 1, closed="right"),
+            Interval(numbers.Integral, 2, None, closed="left"),
+            Interval(numbers.Real, 0, 1, closed="right"),
         ],
         "min_samples_leaf": [
-            Interval(int, 1, None, closed="left"),
-            Interval(float, 0, 0.5, closed="right"),
+            Interval(numbers.Integral, 1, None, closed="left"),
+            Interval(numbers.Real, 0, 0.5, closed="right"),
         ],
         "max_features": [
-            Interval(int, 1, None, closed="left"),
-            Interval(float, 0, 1, closed="right"),
+            Interval(numbers.Integral, 1, None, closed="left"),
+            Interval(numbers.Real, 0, 1, closed="right"),
             StrOptions({"sqrt", "log2"}),
             None,
         ],
         "bootstrap": ["boolean"],
         "oob_score": ["boolean"],
         "random_state": ["random_state"],
-        "n_jobs": [Interval(int, 1, None, closed="left")],
-        "verbose": [Interval(int, 0, None, closed="left")],
+        "n_jobs": [Interval(numbers.Integral, 1, None, closed="left")],
+        "verbose": [Interval(numbers.Integral, 0, None, closed="left")],
     }
 
     def __init__(
@@ -170,7 +171,16 @@ class FastRandomSurvivalForest(BaseEstimator, SurvivalAnalysisMixin):
         """
         self._validate_params()
 
-        X = validate_data(X, ensure_min_samples=2, dtype=np.float64)
+        # Convert pandas DataFrame to numpy array if necessary
+        if hasattr(X, "values"):
+            X = X.values
+
+        # Ensure X is a 2D array
+        X = np.asarray(X)
+        if X.ndim == 1:
+            X = X.reshape(-1, 1)
+
+        # Check and extract event and time information
         event, time = check_array_survival(X, y)
         n_samples, n_features = X.shape
 
@@ -317,7 +327,15 @@ class FastRandomSurvivalForest(BaseEstimator, SurvivalAnalysisMixin):
             Predicted risk scores.
         """
         check_is_fitted(self, "estimators_")
-        X = validate_data(X, dtype=np.float64, reset=False)
+
+        # Convert pandas DataFrame to numpy array if necessary
+        if hasattr(X, "values"):
+            X = X.values
+
+        # Ensure X is a 2D array with the right data type
+        X = np.asarray(X, dtype=np.float64)
+        if X.ndim == 1:
+            X = X.reshape(-1, 1)
 
         # Make predictions from all trees in parallel
         all_preds = Parallel(n_jobs=self.n_jobs, verbose=self.verbose)(
@@ -353,7 +371,15 @@ class FastRandomSurvivalForest(BaseEstimator, SurvivalAnalysisMixin):
             of StepFunction instances.
         """
         check_is_fitted(self, "estimators_")
-        X = validate_data(X, dtype=np.float64, reset=False)
+
+        # Convert pandas DataFrame to numpy array if necessary
+        if hasattr(X, "values"):
+            X = X.values
+
+        # Ensure X is a 2D array with the right data type
+        X = np.asarray(X, dtype=np.float64)
+        if X.ndim == 1:
+            X = X.reshape(-1, 1)
 
         # Get survival function predictions from all trees
         surv_preds = Parallel(n_jobs=self.n_jobs, verbose=self.verbose)(
